@@ -1,0 +1,51 @@
+name: Rust subscription control plane
+
+on:
+  push:
+    branches: ['feat/rust-subscription-control-plane', 'main']
+    paths:
+      - 'packages/durable-streams-rust/**'
+      - '.github/workflows/server_rust_subscriptions.yml'
+  pull_request:
+    paths:
+      - 'packages/durable-streams-rust/**'
+      - '.github/workflows/server_rust_subscriptions.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: subscriptions-${{ github.event.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  subscriptions:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/durable-streams-rust
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/durable-streams-rust
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+      - name: Install protocol suite
+        working-directory: .
+        run: pnpm install --frozen-lockfile --filter @electric-ax/durable-streams-server-rust...
+      - name: Build and test subscriptions
+        run: |
+          cargo build --release --locked --features subscriptions
+          cargo test --release --locked --features subscriptions
+          cargo clippy --release --locked --features subscriptions -- -D warnings
+      - name: Protocol and crash recovery conformance
+        env:
+          RUST_SERVER_SUBSCRIPTIONS: '1'
+        run: pnpm test:conformance

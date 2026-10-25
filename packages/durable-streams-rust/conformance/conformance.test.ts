@@ -26,22 +26,16 @@ const longPollTimeoutMs = 500
 const config = {
   baseUrl: externalUrl ?? `http://localhost:${port}`,
   longPollTimeoutMs,
-  // This server implements the core protocol only; the subscription/control-plane
-  // suite is out of scope, so skip it rather than report it as failing.
-  subscriptions: false,
+  subscriptions: process.env.RUST_SERVER_SUBSCRIPTIONS === `1`,
 }
 
 let server: ChildProcess | null = null
 
 beforeAll(async () => {
   if (!externalUrl) {
-    const binary = path.join(
-      __dirname,
-      `..`,
-      `target`,
-      `release`,
-      `durable-streams-server`
-    )
+    const binary =
+      process.env.RUST_SERVER_BINARY ??
+      path.join(__dirname, `..`, `target`, `release`, `durable-streams-server`)
     const dataDir = mkdtempSync(path.join(tmpdir(), `ds-rust-conformance-`))
     // Extra server flags for the run-configuration matrix (CI runs the suite
     // once per config — see README "Run-configuration matrix" + ci.yml). E.g.
@@ -62,6 +56,11 @@ beforeAll(async () => {
         // Must match config.longPollTimeoutMs so the suite's timeout assertions hold.
         `--long-poll-timeout-ms`,
         String(longPollTimeoutMs),
+        ...(config.subscriptions ? [`--subscriptions`] : []),
+        `--worker-threads`,
+        `2`,
+        `--wal-shards`,
+        `2`,
         ...extraArgs,
       ],
       { stdio: [`ignore`, `pipe`, `pipe`] }

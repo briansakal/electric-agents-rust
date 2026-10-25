@@ -240,6 +240,8 @@ fn status_class(status: u16) -> &'static str {
 fn route_label(path: &str) -> &'static str {
     if path == "/health" {
         "/health"
+    } else if crate::subscriptions_route(path) {
+        "/__ds"
     } else {
         "/<stream>"
     }
@@ -264,10 +266,25 @@ pub async fn handle(store: Arc<Store>, req: Req) -> Resp {
 
 async fn dispatch(store: Arc<Store>, req: Req) -> Resp {
     let path = req.path.clone();
+    // Reserve control paths even in builds where subscriptions are disabled.
+    if crate::subscriptions_route(&path) {
+        #[cfg(feature = "subscriptions")]
+        if let Some(service) = store.subscriptions.get() {
+            return service.handle(req).await;
+        }
+        return text_response(404, "subscriptions are not enabled");
+    }
     if path == "/health" {
         text_response(200, "ok")
     } else {
-        match req.method {
+        #[cfg(feature = "subscriptions")]
+        let subscription_service = store.subscriptions.get().cloned();
+        #[cfg(feature = "subscriptions")]
+        let changed_path = if subscription_service.is_some()
+            && matches!(req.method, Method::Put | Method::Post | Method::Delete) {
+            Some(path.clone())
+        } else { None };
+        let response = match req.method {
             Method::Put => handle_create(store, req, path).await,
             Method::Post => handle_append(store, req, path).await,
             Method::Get => handle_read(store, req, path).await,
@@ -275,7 +292,14 @@ async fn dispatch(store: Arc<Store>, req: Req) -> Resp {
             Method::Delete => handle_delete(store, path).await,
             Method::Options => ResponseBuilder::new(204).body(empty()),
             Method::Other => text_response(405, "method not allowed"),
+        };
+        #[cfg(feature = "subscriptions")]
+        if (200..300).contains(&response.status) {
+            if let (Some(service), Some(path)) = (subscription_service, changed_path) {
+                service.stream_changed(path);
+            }
         }
+        response
     }
 }
 

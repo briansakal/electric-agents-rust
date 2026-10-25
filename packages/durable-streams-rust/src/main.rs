@@ -7,6 +7,8 @@ mod srvstats;
 #[cfg(target_os = "linux")]
 mod sse_reactor;
 mod store;
+#[cfg(feature = "subscriptions")]
+mod subscriptions;
 mod telemetry;
 mod tier;
 mod wal;
@@ -17,6 +19,10 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 
 use store::Store;
+
+fn subscriptions_route(path: &str) -> bool {
+    path.ends_with("/__ds") || path.contains("/__ds/")
+}
 
 /// Take a flag's value or exit(2) with a clean usage error (not a panic).
 fn val(o: Option<String>, flag: &str) -> String {
@@ -114,6 +120,8 @@ fn main() {
     #[cfg(unix)]
     raise_nofile_limit();
     let mut port: u16 = 4437; // protocol default (PROTOCOL.md §13.1)
+    let mut subscriptions_enabled = false;
+    let mut public_url: Option<String> = None;
     let mut host: std::net::IpAddr = [127, 0, 0, 1].into();
     let mut data_dir = std::env::temp_dir().join("durable-streams-rust");
     let mut tier = tier::TierConfig::default();
@@ -142,6 +150,8 @@ fn main() {
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
+            "--subscriptions" => subscriptions_enabled = true,
+            "--public-url" => public_url = Some(val(args.next(), "--public-url")),
             "--host" => host = parse_val(args.next(), "--host"),
             "--port" => port = parse_val(args.next(), "--port"),
             "--data-dir" => data_dir = val(args.next(), "--data-dir").into(),
@@ -291,6 +301,20 @@ fn main() {
         }
     }
 
+    if subscriptions_enabled && !cfg!(feature = "subscriptions") {
+        eprintln!("error: --subscriptions requires a build with --features subscriptions");
+        std::process::exit(2);
+    }
+    if public_url.is_some() && !subscriptions_enabled {
+        eprintln!("error: --public-url requires --subscriptions");
+        std::process::exit(2);
+    }
+    // Subscription cursors must never acknowledge bytes that can disappear.
+    if subscriptions_enabled && handlers::durability() == handlers::DurabilityMode::Memory {
+        eprintln!("error: --subscriptions requires --durability wal");
+        std::process::exit(2);
+    }
+
     // Apply --durability memory AFTER the arg loop. Memory mode is the buffered
     // append path with the WAL stage/wait skipped (no splice intercept, no forced
     // tail-cache-off — those belonged to the removed zero-copy path); the only
@@ -438,6 +462,15 @@ fn main() {
 
         let addr: SocketAddr = (host, port).into();
         let listener = TcpListener::bind(addr).await.expect("bind failed");
+        #[cfg(feature = "subscriptions")]
+        let subscriptions = if subscriptions_enabled {
+            let service = subscriptions::Subscriptions::open(&store, public_url)
+                .expect("failed to initialize subscriptions");
+            store.subscriptions.set(Arc::clone(&service))
+                .unwrap_or_else(|_| panic!("subscriptions already initialized"));
+            service.start();
+            Some(service)
+        } else { None };
         println!(
             "durable-streams-server listening on http://{addr} (data: {})",
             data_dir.display()
@@ -453,6 +486,8 @@ fn main() {
                 #[cfg(target_os = "linux")]
                 sse_reactor::shutdown();
                 engine_raw::drain(std::time::Duration::from_secs(25)).await;
+                #[cfg(feature = "subscriptions")]
+                if let Some(service) = subscriptions { service.shutdown().await; }
                 // Stop + join the dedicated committer threads (Tier-2a) AFTER the
                 // request drain, so any commit a just-drained request staged is
                 // covered by each committer's final drain before the thread exits.
