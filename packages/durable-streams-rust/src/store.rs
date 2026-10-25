@@ -474,6 +474,8 @@ impl StreamState {
 }
 
 pub struct Store {
+    #[cfg(feature = "subscriptions")]
+    pub subscriptions: std::sync::OnceLock<Arc<crate::subscriptions::Subscriptions>>,
     pub streams: DashMap<String, Arc<StreamState>>,
     pub data_dir: PathBuf,
     next_id: AtomicU64,
@@ -636,6 +638,8 @@ impl Store {
         let blobstore = build_blobstore(&tier_config, &data_dir)?;
         let store = Store {
             streams: DashMap::new(),
+            #[cfg(feature = "subscriptions")]
+            subscriptions: std::sync::OnceLock::new(),
             data_dir,
             next_id: AtomicU64::new(seed & MAX_SAFE_INT),
             tier_config,

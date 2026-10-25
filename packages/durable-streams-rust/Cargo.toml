@@ -54,8 +54,18 @@ tracing-opentelemetry = { version = "0.33", optional = true }
 # `--tier` is passed); only the S3 BlobStore adapter is behind this feature.
 object_store = { version = "0.11", optional = true, features = ["aws"] }
 
+# Subscription state is transactional and separate from stream bytes/WAL.
+# Opt-in so protocol-only deployments retain their existing dependency footprint.
+rusqlite = { version = "0.32", optional = true, features = ["bundled"] }
+reqwest = { version = "0.12", optional = true, default-features = false, features = ["rustls-tls", "json"] }
+ring = { version = "0.17", optional = true }
+base64 = { version = "0.22", optional = true }
+chrono = { version = "0.4", optional = true, default-features = false, features = ["clock"] }
+subtle = { version = "2", optional = true }
+
 [features]
 default = []
+subscriptions = ["dep:rusqlite", "dep:reqwest", "dep:ring", "dep:base64", "dep:chrono", "dep:subtle"]
 # Enable OTLP span + metric export over gRPC (tonic). Endpoint/protocol/timeout
 # and sampling are configured entirely via the standard OTEL_* env vars.
 telemetry = [

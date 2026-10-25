@@ -11,10 +11,12 @@ WORKDIR /app
 # .dockerignore at the shared repo root.
 COPY packages/durable-streams-rust/Cargo.toml packages/durable-streams-rust/Cargo.lock ./
 COPY packages/durable-streams-rust/src ./src
-# Default features only (no `tier`/`telemetry`) — minimal image, matching the
-# conformance matrix. To ship S3 tiering, add `--features tier` here AND
-# `ca-certificates` to the runtime stage.
-RUN cargo build --release --locked
+# Empty by default; build the optional control plane with
+# --build-arg CARGO_FEATURES=subscriptions (or subscriptions,tier).
+ARG CARGO_FEATURES=""
+RUN if [ -n "$CARGO_FEATURES" ]; then \
+      cargo build --release --locked --features "$CARGO_FEATURES"; \
+    else cargo build --release --locked; fi
 
 # ---- runtime stage: distroless (glibc cc), no shell / package manager ----
 FROM gcr.io/distroless/cc-debian12 AS runtime

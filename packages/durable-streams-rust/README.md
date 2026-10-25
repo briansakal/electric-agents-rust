@@ -142,6 +142,14 @@ conformance suite once per configuration (the `rust-conformance` matrix in
 
 ## What it implements
 
+**Optional subscription control plane:** build with `--features subscriptions` and
+run with `--subscriptions` to enable the `__ds` subscription APIs, signed webhook
+delivery, and pull-wake leases. Definitions, cursors, leases, retry schedules, and
+the signing key persist in SQLite under the data directory. See
+[Rust backend for Electric Agents](../../docs/rust-agent-backend.md) for deployment,
+recovery semantics, and integration tests. The default protocol-only build does
+not compile these dependencies.
+
 Core protocol: create / append / read (catch-up, long-poll, SSE), HEAD, DELETE, JSON mode, idempotent producers (`Producer-Id` / `Producer-Epoch` / `Stream-Seq`), close, TTL / expiry, cursors, ETags / 304, security headers, and stream forks.
 
 Durable: in `wal` mode (the default), an append returns only after its record is durable in the sharded write-ahead log (WAL). The WAL acks on a group-commit `fdatasync` and recovers cleanly on restart: every WAL record carries both a header CRC32C (torn-header detector — a partially-written header fails immediately) and a payload CRC32C verified on recovery, so no torn or zeroed record is ever replayed. State survives restarts — on boot the store rebuilds every stream from its data file plus a `.meta` sidecar, re-links fork chains, and replays the WAL to reconcile any un-checkpointed tail. (Crash window per [PROTOCOL.md](../../PROTOCOL.md): producer dedup state may lag the data file, so producers should bump their epoch on restart.)
